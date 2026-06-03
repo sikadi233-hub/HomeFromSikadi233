@@ -29,17 +29,20 @@ public class RtpCommand implements CommandExecutor {
 
         Player player = (Player) sender;
 
-        // 冷却检查
-        int remaining = plugin.getRtpRemainingCooldown(player.getUniqueId());
-        if (remaining > 0) {
-            int minutes = remaining / 60;
-            int seconds = remaining % 60;
-            String timeStr = minutes > 0 ? minutes + "分" + seconds + "秒" : seconds + "秒";
-            player.sendMessage(ChatColor.RED + "⏳ RTP冷却中！请等待 " +
-                    ChatColor.GOLD + timeStr +
-                    ChatColor.RED + " 后再试。");
-            return true;
+        // 冷却检查（OP 免疫）
+        if (!player.isOp()) {
+            int remaining = plugin.getRtpRemainingCooldown(player.getUniqueId());
+            if (remaining > 0) {
+                int minutes = remaining / 60;
+                int seconds = remaining % 60;
+                String timeStr = minutes > 0 ? minutes + "分" + seconds + "秒" : seconds + "秒";
+                player.sendMessage(plugin.getMsgError() + "⏳ RTP冷却中！请等待 " +
+                        plugin.getMsgPrimary() + timeStr +
+                        plugin.getMsgError() + " 后再试。");
+                return true;
+            }
         }
+
 
         int minR = plugin.getRtpMinRadius();
         int maxR = plugin.getRtpMaxRadius();

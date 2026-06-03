@@ -2,13 +2,33 @@
 max-own-homes: 4
 max-shared-homes: 3
 share-timeout: 30
-home-cooldown: 3
+home-cooldown: 5
+
+# 传送预热(秒)，0=关闭
+home-warmup: 3
 
 # ========== TPA ==========
 tpa-timeout: 60
 
-# ========== 跨服同步 (MySQL) ==========
-# 留空则只用 YAML 本地存储
+# ========== RTP ==========
+rtp-cooldown: 300
+rtp-min-radius: 500
+rtp-max-radius: 3000
+
+# ========== /back ==========
+back-cooldown: 10
+
+# ========== 消息颜色 ==========
+# 可选: GREEN, GOLD, RED, YELLOW, AQUA, LIGHT_PURPLE, WHITE, GRAY, BLUE
+msg-primary: GOLD
+msg-success: GREEN
+msg-error: RED
+msg-info: GRAY
+
+# ========== 进服欢迎 ==========
+welcome-message: true
+
+# ========== MySQL ==========
 mysql:
   enabled: false
   host: localhost
@@ -17,9 +37,3 @@ mysql:
   username: root
   password: ""
   table-prefix: "hfs_"
-# ========== RTP 随机传送 ==========
-rtp-cooldown: 300      # RTP 冷却(秒) ← 默认5分钟
-rtp-min-radius: 500    # 最小半径
-rtp-max-radius: 3000   # 最大半径
-# ========== /back ==========
-back-cooldown: 10

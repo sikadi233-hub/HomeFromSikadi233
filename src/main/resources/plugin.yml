@@ -1,35 +1,43 @@
 name: HomeFromSikadi233
-version: 1.21.11
+version: 3.1.0
 main: com.example.playerhomes.HomeFromSikadi233
 api-version: "1.21"
 author: Sikadi233
-description: 传送点插件 - TPA/Warp/跨服同步
+description: 传送点插件 - TPA/Warp/RTP/Back/Spawn/分享
 
 commands:
   szcs:
     description: 设置传送点
     usage: "/szcs <名称>"
+    aliases: [sethome]
   cs:
     description: 传送到传送点
     usage: "/cs [名称]"
+    aliases: [home]
   csd:
     description: 查看传送点列表
     usage: "/csd [玩家名]"
+    aliases: [homes]
   sccs:
     description: 删除传送点
     usage: "/sccs <名称>"
+    aliases: [delhome]
   csop:
     description: (OP)传送到指定玩家的传送点
     usage: "/csop <玩家名> <传送点名>"
+    aliases: [homeof]
   fxcs:
     description: 分享传送点给好友
     usage: "/fxcs <玩家名> <传送点名>"
+    aliases: [sharehome]
   tycs:
     description: 接受分享
     usage: "/tycs <分享者名> <传送点名>"
+    aliases: [accepthome]
   btycs:
     description: 拒绝分享
     usage: "/btycs <分享者名> <传送点名>"
+    aliases: [declinehome]
   tpa:
     description: 请求传送到某玩家
     usage: "/tpa <玩家名>"
@@ -66,3 +74,7 @@ commands:
   spawn:
     description: 传送到出生点
     usage: "/spawn"
+  hfsreload:
+    description: (OP)重载配置文件
+    usage: "/hfsreload"
+    aliases: [homesreload]

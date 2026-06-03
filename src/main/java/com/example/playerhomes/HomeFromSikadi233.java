@@ -1,6 +1,7 @@
 package com.example.playerhomes;
 
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.configuration.ConfigurationSection;
@@ -9,6 +10,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.PlayerDeathEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
@@ -18,16 +20,16 @@ import java.util.*;
 
 public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
 
-    // ==================== 数据结构 ====================
+    // ==================== 数据存储 ====================
 
-    // 传送点 / 分享 / 待处理
+    // 自己的传送点: UUID → {名 → 坐标}
     private final Map<UUID, Map<String, Location>> homesMap = new HashMap<>();
+    // 已接受的分享: 接收者UUID → {分享者名 → {名 → 坐标}}
     private final Map<UUID, Map<String, Map<String, Location>>> sharedHomes = new HashMap<>();
+    // 待处理分享
     private final Map<UUID, Map<String, Map<String, Location>>> pendingShares = new HashMap<>();
+    // 自动取消任务
     private final Map<UUID, Map<String, Map<String, BukkitTask>>> cancelTasks = new HashMap<>();
-
-    // Spawn
-    private Location spawnLocation;
 
     // TPA
     private final Map<UUID, TpaRequest> tpaRequests = new HashMap<>();
@@ -36,31 +38,48 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
     // Warp
     private final Map<String, Location> warps = new HashMap<>();
 
+    // Spawn
+    private Location spawnLocation;
+
     // 冷却
     private final Map<UUID, Long> lastHomeTime = new HashMap<>();
     private final Map<UUID, Long> lastRtpTime = new HashMap<>();
     private final Map<UUID, Long> lastBackTime = new HashMap<>();
 
-    // /back
+    // /back 追踪
     private final Map<UUID, Location> lastTeleportLocation = new HashMap<>();
     private final Map<UUID, Location> deathLocation = new HashMap<>();
     private final Set<UUID> backInProgress = new HashSet<>();
 
-    // 数据库
+    // 传送预热
+    private final Map<UUID, BukkitTask> warmupTasks = new HashMap<>();
+
+    // MySQL
     private DatabaseManager database;
 
     // 配置值
     private int maxOwnHomes = 4;
     private int maxSharedHomes = 3;
     private int shareTimeout = 30;
-    private int homeCooldown = 3;
+    private int homeCooldown = 5;
+    private int homeWarmup = 3;
     private int tpaTimeout = 60;
     private int rtpCooldown = 300;
     private int rtpMinRadius = 500;
     private int rtpMaxRadius = 3000;
     private int backCooldown = 10;
 
-    // ==================== TPA 数据结构 ====================
+    // 消息颜色
+    private ChatColor msgPrimary = ChatColor.GOLD;
+    private ChatColor msgSuccess = ChatColor.GREEN;
+    private ChatColor msgError = ChatColor.RED;
+    private ChatColor msgInfo = ChatColor.GRAY;
+
+    // 进服欢迎
+    private boolean welcomeMessage = true;
+
+    // ==================== 数据结构 ====================
+
     public enum TpaType { TPA, TPAHERE }
     public record TpaRequest(Player sender, Player target, TpaType type, long time) {}
 
@@ -69,20 +88,12 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
     @Override
     public void onEnable() {
         saveDefaultConfig();
-        maxOwnHomes = getConfig().getInt("max-own-homes", 4);
-        maxSharedHomes = getConfig().getInt("max-shared-homes", 3);
-        shareTimeout = getConfig().getInt("share-timeout", 30);
-        homeCooldown = getConfig().getInt("home-cooldown", 5);
-        tpaTimeout = getConfig().getInt("tpa-timeout", 60);
-        rtpCooldown = getConfig().getInt("rtp-cooldown", 300);
-        rtpMinRadius = getConfig().getInt("rtp-min-radius", 500);
-        rtpMaxRadius = getConfig().getInt("rtp-max-radius", 3000);
-        backCooldown = getConfig().getInt("back-cooldown", 10);
+        setConfigValues();
 
         database = new DatabaseManager(this);
         loadAll();
 
-        // 原有命令
+        // ---- 注册命令 ----
         getCommand("szcs").setExecutor(new SetHomeCommand(this));
         getCommand("szcs").setTabCompleter(new SetHomeTabCompleter(this));
         getCommand("cs").setExecutor(new HomeCommand(this));
@@ -100,7 +111,6 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
         getCommand("btycs").setExecutor(new DeclineHomeCommand(this));
         getCommand("btycs").setTabCompleter(new DeclineHomeTabCompleter(this));
 
-        // TPA
         getCommand("tpa").setExecutor(new TpaCommand(this));
         getCommand("tpa").setTabCompleter(new TpaTabCompleter());
         getCommand("tpahere").setExecutor(new TpaHereCommand(this));
@@ -108,7 +118,6 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
         getCommand("tpaccept").setExecutor(new TpAcceptCommand(this));
         getCommand("tpdeny").setExecutor(new TpDenyCommand(this));
 
-        // Warp
         getCommand("setwarp").setExecutor(new SetWarpCommand(this));
         getCommand("setwarp").setTabCompleter(new WarpTabCompleter(this));
         getCommand("warp").setExecutor(new WarpCommand(this));
@@ -117,23 +126,19 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
         getCommand("delwarp").setExecutor(new DelWarpCommand(this));
         getCommand("delwarp").setTabCompleter(new WarpTabCompleter(this));
 
-        // RTP
         getCommand("rtp").setExecutor(new RtpCommand(this));
-
-        // Back
         getCommand("back").setExecutor(new BackCommand(this));
+        getCommand("back").setTabCompleter(new BackTabCompleter());
 
-        // 加载 spawn
-        loadSpawn();
-
-        // Spawn 命令
         getCommand("setspawn").setExecutor(new SetSpawnCommand(this));
         getCommand("spawn").setExecutor(new SpawnCommand(this));
 
-        // 事件
+        getCommand("hfsreload").setExecutor(new ReloadCommand(this));
+
+        // ---- 事件 ----
         getServer().getPluginManager().registerEvents(this, this);
 
-        getLogger().info("HomeFromSikadi233 v3.0 已启动！");
+        getLogger().info("HomeFromSikadi233 v3.1 已启动！");
     }
 
     @Override
@@ -144,9 +149,31 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
         cancelTasks.clear();
         for (BukkitTask task : tpaCancelTasks.values()) task.cancel();
         tpaCancelTasks.clear();
+        for (BukkitTask task : warmupTasks.values()) task.cancel();
+        warmupTasks.clear();
         saveAll();
         database.close();
         getLogger().info("HomeFromSikadi233 已关闭。");
+    }
+
+    // ==================== 配置 ====================
+
+    public void setConfigValues() {
+        maxOwnHomes = getConfig().getInt("max-own-homes", 4);
+        maxSharedHomes = getConfig().getInt("max-shared-homes", 3);
+        shareTimeout = getConfig().getInt("share-timeout", 30);
+        homeCooldown = getConfig().getInt("home-cooldown", 5);
+        homeWarmup = getConfig().getInt("home-warmup", 3);
+        tpaTimeout = getConfig().getInt("tpa-timeout", 60);
+        rtpCooldown = getConfig().getInt("rtp-cooldown", 300);
+        rtpMinRadius = getConfig().getInt("rtp-min-radius", 500);
+        rtpMaxRadius = getConfig().getInt("rtp-max-radius", 3000);
+        backCooldown = getConfig().getInt("back-cooldown", 10);
+        welcomeMessage = getConfig().getBoolean("welcome-message", true);
+        try { msgPrimary = ChatColor.valueOf(getConfig().getString("msg-primary", "GOLD")); } catch (Exception e) {}
+        try { msgSuccess = ChatColor.valueOf(getConfig().getString("msg-success", "GREEN")); } catch (Exception e) {}
+        try { msgError = ChatColor.valueOf(getConfig().getString("msg-error", "RED")); } catch (Exception e) {}
+        try { msgInfo = ChatColor.valueOf(getConfig().getString("msg-info", "GRAY")); } catch (Exception e) {}
     }
 
     // ==================== 自己的传送点 ====================
@@ -193,83 +220,17 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
     }
 
     public int getMaxOwnHomes() { return maxOwnHomes; }
-
     public int countOwnHomes(UUID uuid) {
         Map<String, Location> map = homesMap.get(uuid);
         return map == null ? 0 : map.size();
     }
 
-    // ==================== Spawn ====================
-
-    public Location getSpawn() { return spawnLocation; }
-
-    public void setSpawn(Location loc) {
-        this.spawnLocation = loc.clone();
-        if (database.isEnabled()) saveSpawnToDB();
-        saveSpawnToFile();
-    }
-
-    private void loadSpawn() {
-        if (database.isEnabled()) loadSpawnFromDB();
-        if (spawnLocation == null) {
-            Location loc = getConfig().getLocation("spawn");
-            if (loc != null) spawnLocation = loc;
-        }
-        // 仍然为空就用服务器默认出生点
-        if (spawnLocation == null) {
-            spawnLocation = getServer().getWorlds().get(0).getSpawnLocation();
-        }
-    }
-
-    private void saveSpawnToFile() {
-        if (spawnLocation != null) {
-            getConfig().set("spawn", spawnLocation);
-            saveConfig();
-        }
-    }
-
-    private void loadSpawnFromDB() {
-        String p = database.getPrefix();
-        try (Connection c = database.getConnection();
-             Statement s = c.createStatement()) {
-            s.execute("CREATE TABLE IF NOT EXISTS " + p + "spawn (world VARCHAR(64), x DOUBLE, y DOUBLE, z DOUBLE, yaw FLOAT, pitch FLOAT)");
-            try (ResultSet rs = s.executeQuery("SELECT * FROM " + p + "spawn LIMIT 1")) {
-                if (rs.next()) {
-                    spawnLocation = new Location(Bukkit.getWorld(rs.getString("world")),
-                            rs.getDouble("x"), rs.getDouble("y"), rs.getDouble("z"),
-                            rs.getFloat("yaw"), rs.getFloat("pitch"));
-                }
-            }
-        } catch (SQLException e) {
-            getLogger().warning("加载spawn失败: " + e.getMessage());
-        }
-    }
-
-    private void saveSpawnToDB() {
-        if (spawnLocation == null) return;
-        String p = database.getPrefix();
-        try (Connection c = database.getConnection();
-             Statement s = c.createStatement()) {
-            s.execute("DELETE FROM " + p + "spawn");
-            try (PreparedStatement ps = c.prepareStatement(
-                    "INSERT INTO " + p + "spawn (world,x,y,z,yaw,pitch) VALUES(?,?,?,?,?,?)")) {
-                ps.setString(1, spawnLocation.getWorld().getName());
-                ps.setDouble(2, spawnLocation.getX()); ps.setDouble(3, spawnLocation.getY());
-                ps.setDouble(4, spawnLocation.getZ());
-                ps.setFloat(5, spawnLocation.getYaw()); ps.setFloat(6, spawnLocation.getPitch());
-                ps.executeUpdate();
-            }
-        } catch (SQLException e) {
-            getLogger().warning("保存spawn失败: " + e.getMessage());
-        }
-    }
-
     // ==================== 已接受的分享 ====================
 
     public Location getSharedHome(UUID receiverUUID, String sharerName, String homeName) {
-        Map<String, Map<String, Location>> bySharer = sharedHomes.get(receiverUUID);
+        var bySharer = sharedHomes.get(receiverUUID);
         if (bySharer == null) return null;
-        Map<String, Location> homes = bySharer.get(sharerName);
+        var homes = bySharer.get(sharerName);
         return homes == null ? null : homes.get(homeName);
     }
 
@@ -349,43 +310,39 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
         return null;
     }
 
-    private void autoCancelShare(UUID receiverUUID, String sharerName, String homeName) {
-        var pending = pendingShares.get(receiverUUID);
+    private void autoCancelShare(UUID r, String s, String h) {
+        var pending = pendingShares.get(r);
         if (pending == null) return;
-        var homes = pending.get(sharerName);
-        if (homes == null || !homes.containsKey(homeName)) return;
-        homes.remove(homeName);
-        if (homes.isEmpty()) pending.remove(sharerName);
-        if (pending.isEmpty()) pendingShares.remove(receiverUUID);
+        var homes = pending.get(s);
+        if (homes == null || !homes.containsKey(h)) return;
+        homes.remove(h);
+        if (homes.isEmpty()) pending.remove(s);
+        if (pending.isEmpty()) pendingShares.remove(r);
         savePendingToFile();
-        cleanCancelTaskEntry(receiverUUID, sharerName, homeName);
-        Player receiver = Bukkit.getPlayer(receiverUUID);
-        if (receiver != null) receiver.sendMessage("§e⏰ " + sharerName + " §e分享的 §6" + homeName + " §e已过期。");
-        Player sharer = Bukkit.getPlayer(sharerName);
-        if (sharer != null) sharer.sendMessage("§e⏰ 分享给 " + (receiver != null ? receiver.getName() : "玩家") + " 的 §6" + homeName + " §e已过期(" + shareTimeout + "秒)。");
+        cleanCancelTaskEntry(r, s, h);
+        Player rec = Bukkit.getPlayer(r);
+        if (rec != null) rec.sendMessage("§e⏰ " + s + " §e分享的 §6" + h + " §e已过期。");
+        Player shar = Bukkit.getPlayer(s);
+        if (shar != null) shar.sendMessage("§e⏰ 分享给 " + (rec != null ? rec.getName() : "玩家") + " 的 §6" + h + " §e已过期(" + shareTimeout + "秒)。");
     }
 
-    private void cancelAutoCancelTask(UUID ruuid, String sharer, String hName) {
-        var bySharer = cancelTasks.get(ruuid);
-        if (bySharer == null) return;
-        var homes = bySharer.get(sharer);
+    private void cancelAutoCancelTask(UUID r, String s, String h) {
+        var by = cancelTasks.get(r);
+        if (by == null) return;
+        var homes = by.get(s);
         if (homes == null) return;
-        BukkitTask task = homes.remove(hName);
-        if (task != null) {
-            task.cancel();
-            if (homes.isEmpty()) bySharer.remove(sharer);
-            if (bySharer.isEmpty()) cancelTasks.remove(ruuid);
-        }
+        BukkitTask t = homes.remove(h);
+        if (t != null) { t.cancel(); if (homes.isEmpty()) by.remove(s); if (by.isEmpty()) cancelTasks.remove(r); }
     }
 
-    private void cleanCancelTaskEntry(UUID ruuid, String sharer, String hName) {
-        var bySharer = cancelTasks.get(ruuid);
-        if (bySharer == null) return;
-        var homes = bySharer.get(sharer);
+    private void cleanCancelTaskEntry(UUID r, String s, String h) {
+        var by = cancelTasks.get(r);
+        if (by == null) return;
+        var homes = by.get(s);
         if (homes == null) return;
-        homes.remove(hName);
-        if (homes.isEmpty()) bySharer.remove(sharer);
-        if (bySharer.isEmpty()) cancelTasks.remove(ruuid);
+        homes.remove(h);
+        if (homes.isEmpty()) by.remove(s);
+        if (by.isEmpty()) cancelTasks.remove(r);
     }
 
     public Map<String, Map<String, Location>> getPendingShares(UUID uuid) {
@@ -395,7 +352,7 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
 
     public int getShareTimeout() { return shareTimeout; }
 
-    // ==================== TPA 系统 ====================
+    // ==================== TPA ====================
 
     public TpaRequest getTpaRequest(UUID targetUUID) { return tpaRequests.get(targetUUID); }
 
@@ -408,8 +365,8 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
 
     public void removeTpaRequest(UUID targetUUID) {
         tpaRequests.remove(targetUUID);
-        BukkitTask task = tpaCancelTasks.remove(targetUUID);
-        if (task != null) task.cancel();
+        BukkitTask t = tpaCancelTasks.remove(targetUUID);
+        if (t != null) t.cancel();
     }
 
     private void autoCancelTpa(UUID targetUUID) {
@@ -422,7 +379,7 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
 
     public int getTpaTimeout() { return tpaTimeout; }
 
-    // ==================== Warp 系统 ====================
+    // ==================== Warp ====================
 
     public void addWarp(String name, Location loc) {
         warps.put(name.toLowerCase(), loc.clone());
@@ -443,20 +400,43 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
 
     public Map<String, Location> getWarps() { return Collections.unmodifiableMap(warps); }
 
-    // ==================== 传送冷却 ====================
+    // ==================== Spawn ====================
+
+    public Location getSpawn() { return spawnLocation; }
+
+    public void setSpawn(Location loc) {
+        spawnLocation = loc.clone();
+        if (database.isEnabled()) saveSpawnToDB();
+        saveSpawnToFile();
+    }
+
+    private void loadSpawn() {
+        if (database.isEnabled()) loadSpawnFromDB();
+        if (spawnLocation == null) {
+            Location loc = getConfig().getLocation("spawn");
+            if (loc != null) spawnLocation = loc;
+        }
+        if (spawnLocation == null)
+            spawnLocation = getServer().getWorlds().get(0).getSpawnLocation();
+    }
+
+    private void saveSpawnToFile() {
+        if (spawnLocation != null) { getConfig().set("spawn", spawnLocation); saveConfig(); }
+    }
+
+    // ==================== 冷却 ====================
 
     public int getHomeCooldown() { return homeCooldown; }
+    public int getHomeWarmup() { return homeWarmup; }
 
     public int getRemainingCooldown(UUID uuid) {
         Long last = lastHomeTime.get(uuid);
         if (last == null) return 0;
-        long remaining = homeCooldown - (System.currentTimeMillis() - last) / 1000;
-        return remaining > 0 ? (int) remaining : 0;
+        long r = homeCooldown - (System.currentTimeMillis() - last) / 1000;
+        return r > 0 ? (int) r : 0;
     }
 
     public void recordHomeUse(UUID uuid) { lastHomeTime.put(uuid, System.currentTimeMillis()); }
-
-    // ==================== RTP 冷却 ====================
 
     public int getRtpCooldown() { return rtpCooldown; }
     public int getRtpMinRadius() { return rtpMinRadius; }
@@ -465,38 +445,42 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
     public int getRtpRemainingCooldown(UUID uuid) {
         Long last = lastRtpTime.get(uuid);
         if (last == null) return 0;
-        long remaining = rtpCooldown - (System.currentTimeMillis() - last) / 1000;
-        return remaining > 0 ? (int) remaining : 0;
+        long r = rtpCooldown - (System.currentTimeMillis() - last) / 1000;
+        return r > 0 ? (int) r : 0;
     }
 
     public void recordRtpUse(UUID uuid) { lastRtpTime.put(uuid, System.currentTimeMillis()); }
-
-    // ==================== Back 冷却 ====================
 
     public int getBackCooldown() { return backCooldown; }
 
     public int getBackRemainingCooldown(UUID uuid) {
         Long last = lastBackTime.get(uuid);
         if (last == null) return 0;
-        long remaining = backCooldown - (System.currentTimeMillis() - last) / 1000;
-        return remaining > 0 ? (int) remaining : 0;
+        long r = backCooldown - (System.currentTimeMillis() - last) / 1000;
+        return r > 0 ? (int) r : 0;
     }
 
     public void recordBackUse(UUID uuid) { lastBackTime.put(uuid, System.currentTimeMillis()); }
 
-    // ==================== /back 系统 ====================
+    public Map<UUID, BukkitTask> getWarmupTasks() { return warmupTasks; }
+
+    // ==================== /back ====================
 
     public Location getLastTeleportLocation(UUID uuid) { return lastTeleportLocation.get(uuid); }
     public Location getDeathLocation(UUID uuid) { return deathLocation.get(uuid); }
 
-    public void setBackInProgress(UUID uuid, boolean inProgress) {
-        if (inProgress) backInProgress.add(uuid);
-        else backInProgress.remove(uuid);
+    public void setBackInProgress(UUID uuid, boolean b) {
+        if (b) backInProgress.add(uuid); else backInProgress.remove(uuid);
     }
 
-    public boolean isBackInProgress(UUID uuid) { return backInProgress.contains(uuid); }
+    // ==================== 消息颜色 ====================
 
-    // ==================== 事件监听 ====================
+    public ChatColor getMsgPrimary() { return msgPrimary; }
+    public ChatColor getMsgSuccess() { return msgSuccess; }
+    public ChatColor getMsgError() { return msgError; }
+    public ChatColor getMsgInfo() { return msgInfo; }
+
+    // ==================== 事件 ====================
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPlayerTeleport(PlayerTeleportEvent event) {
@@ -508,11 +492,24 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerDeath(PlayerDeathEvent event) {
-        Player player = event.getEntity();
-        deathLocation.put(player.getUniqueId(), player.getLocation().clone());
+        deathLocation.put(event.getEntity().getUniqueId(), event.getEntity().getLocation().clone());
     }
 
-    // ==================== 工具方法 ====================
+    @EventHandler(priority = EventPriority.NORMAL)
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        if (!welcomeMessage) return;
+        Player player = event.getPlayer();
+        int homeCount = countOwnHomes(player.getUniqueId());
+        player.sendMessage("");
+        player.sendMessage(msgPrimary + "★ " + msgSuccess + "欢迎, " + msgPrimary + player.getName() + msgSuccess + "!");
+        if (homeCount == 0)
+            player.sendMessage(msgInfo + "  使用 " + msgPrimary + "/szcs <名称>" + msgInfo + " 设置传送点");
+        else
+            player.sendMessage(msgInfo + "  你有 " + msgPrimary + homeCount + msgInfo + " 个传送点 | " + msgPrimary + "/cs" + msgInfo + " 查看");
+        player.sendMessage("");
+    }
+
+    // ==================== 工具 ====================
 
     @SuppressWarnings("deprecation")
     public UUID getUUIDByName(String name) {
@@ -539,6 +536,7 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
         loadSharedFromFile();
         loadPendingFromFile();
         loadWarpsFromFile();
+        loadSpawn();
     }
 
     private void saveAll() {
@@ -654,7 +652,7 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
         saveConfig();
     }
 
-    // ==================== MySQL 同步 ====================
+    // ==================== MySQL ====================
 
     private void loadFromMySQL() {
         String p = database.getPrefix();
@@ -755,5 +753,35 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
              PreparedStatement ps = c.prepareStatement("DELETE FROM " + p + "warps WHERE name=?")) {
             ps.setString(1, name.toLowerCase()); ps.executeUpdate();
         } catch (SQLException e) { getLogger().warning("MySQL deleteWarp: " + e.getMessage()); }
+    }
+
+    private void loadSpawnFromDB() {
+        String p = database.getPrefix();
+        try (Connection c = database.getConnection(); Statement s = c.createStatement()) {
+            s.execute("CREATE TABLE IF NOT EXISTS " + p + "spawn (world VARCHAR(64), x DOUBLE, y DOUBLE, z DOUBLE, yaw FLOAT, pitch FLOAT)");
+            try (ResultSet rs = s.executeQuery("SELECT * FROM " + p + "spawn LIMIT 1")) {
+                if (rs.next()) {
+                    spawnLocation = new Location(Bukkit.getWorld(rs.getString("world")),
+                            rs.getDouble("x"), rs.getDouble("y"), rs.getDouble("z"),
+                            rs.getFloat("yaw"), rs.getFloat("pitch"));
+                }
+            }
+        } catch (SQLException e) { getLogger().warning("加载spawn失败: " + e.getMessage()); }
+    }
+
+    private void saveSpawnToDB() {
+        if (spawnLocation == null) return;
+        String p = database.getPrefix();
+        try (Connection c = database.getConnection(); Statement s = c.createStatement()) {
+            s.execute("DELETE FROM " + p + "spawn");
+            try (PreparedStatement ps = c.prepareStatement(
+                    "INSERT INTO " + p + "spawn (world,x,y,z,yaw,pitch) VALUES(?,?,?,?,?,?)")) {
+                ps.setString(1, spawnLocation.getWorld().getName());
+                ps.setDouble(2, spawnLocation.getX()); ps.setDouble(3, spawnLocation.getY());
+                ps.setDouble(4, spawnLocation.getZ());
+                ps.setFloat(5, spawnLocation.getYaw()); ps.setFloat(6, spawnLocation.getPitch());
+                ps.executeUpdate();
+            }
+        } catch (SQLException e) { getLogger().warning("保存spawn失败: " + e.getMessage()); }
     }
 }

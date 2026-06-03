@@ -9,12 +9,17 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
+import org.bukkit.scheduler.BukkitTask;
 
+import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 public class HomeCommand implements CommandExecutor {
 
     private final HomeFromSikadi233 plugin;
+    // 缓存预热监听器
+    private final Map<UUID, org.bukkit.event.Listener> moveListeners = new HashMap<>();
 
     public HomeCommand(HomeFromSikadi233 plugin) {
         this.plugin = plugin;
@@ -30,199 +35,160 @@ public class HomeCommand implements CommandExecutor {
 
         Player player = (Player) sender;
 
-        // ========== /cs（无参数）→ 显示传送点列表（不看冷却）==========
+        // /cs 无参数 → 显示列表
         if (args.length == 0) {
             showHomeList(player);
             return true;
         }
 
-        // ========== 冷却检查 ==========
-        int remaining = plugin.getRemainingCooldown(player.getUniqueId());
-        if (remaining > 0) {
-            player.sendMessage(ChatColor.RED + "⏳ 传送冷却中！请等待 " +
-                    ChatColor.GOLD + remaining +
-                    ChatColor.RED + " 秒后再试。");
-            return true;
+        // 冷却检查（OP免疫）
+        if (!player.isOp()) {
+            int remaining = plugin.getRemainingCooldown(player.getUniqueId());
+            if (remaining > 0) {
+                player.sendMessage(plugin.getMsgError() + "⏳ 传送冷却中！请等待 " +
+                        plugin.getMsgPrimary() + remaining +
+                        plugin.getMsgError() + " 秒后再试。");
+                return true;
+            }
         }
 
-        // ========== /cs <分享者> <传送点名> → 分享的传送点 ==========
+        Location destination = null;
+
+        // /cs <玩家> <名>
         if (args.length >= 2) {
-            String sharerName = args[0];
-            String homeName = args[1].toLowerCase();
-            Location loc = plugin.getSharedHome(player.getUniqueId(), sharerName, homeName);
-
-            if (loc != null) {
-                player.teleport(loc);
-                plugin.recordHomeUse(player.getUniqueId());
-                player.sendMessage(ChatColor.GREEN + "🏠 已传送到 " +
-                        ChatColor.GOLD + sharerName +
-                        ChatColor.GREEN + " 分享的 " +
-                        ChatColor.GOLD + homeName + "！" +
-                        ChatColor.GRAY + " (" + plugin.getHomeCooldown() + "秒冷却)");
-                return true;
+            destination = plugin.getSharedHome(player.getUniqueId(), args[0], args[1].toLowerCase());
+            if (destination == null) {
+                destination = plugin.getOwnHome(player.getUniqueId(), (args[0] + " " + args[1]).toLowerCase());
             }
-
-            String combinedName = (args[0] + " " + args[1]).toLowerCase();
-            Location ownLoc = plugin.getOwnHome(player.getUniqueId(), combinedName);
-            if (ownLoc != null) {
-                player.teleport(ownLoc);
-                plugin.recordHomeUse(player.getUniqueId());
-                player.sendMessage(ChatColor.GREEN + "🏠 已传送到 " +
-                        ChatColor.GOLD + combinedName + "！" +
-                        ChatColor.GRAY + " (" + plugin.getHomeCooldown() + "秒冷却)");
-                return true;
-            }
-
-            player.sendMessage(ChatColor.RED + "❌ 传送点不存在！");
-            player.sendMessage(ChatColor.GRAY + "使用 /cs 查看传送点列表");
-            return true;
-        }
-
-        // ========== /cs <名称> → 自己的或分享者 ==========
-        String homeName = args[0];
-
-        Location ownLoc = plugin.getOwnHome(player.getUniqueId(), homeName);
-        if (ownLoc != null) {
-            player.teleport(ownLoc);
-            plugin.recordHomeUse(player.getUniqueId());
-            player.sendMessage(ChatColor.GREEN + "🏠 已传送到 " +
-                    ChatColor.GOLD + homeName + "！" +
-                    ChatColor.GRAY + " (" + plugin.getHomeCooldown() + "秒冷却)");
-            return true;
-        }
-
-        Map<String, Map<String, Location>> shared = plugin.getSharedHomes(player.getUniqueId());
-        if (shared.containsKey(homeName)) {
-            Map<String, Location> sharedHomes = shared.get(homeName);
-            if (sharedHomes.size() == 1) {
-                Map.Entry<String, Location> entry = sharedHomes.entrySet().iterator().next();
-                player.teleport(entry.getValue());
-                plugin.recordHomeUse(player.getUniqueId());
-                player.sendMessage(ChatColor.GREEN + "🏠 已传送到 " +
-                        ChatColor.GOLD + homeName +
-                        ChatColor.GREEN + " 分享的 " +
-                        ChatColor.GOLD + entry.getKey() + "！" +
-                        ChatColor.GRAY + " (" + plugin.getHomeCooldown() + "秒冷却)");
-                return true;
-            } else {
-                player.sendMessage(ChatColor.GOLD + homeName + ChatColor.YELLOW + " 分享了多个传送点给你：");
-                for (String hName : sharedHomes.keySet()) {
-                    player.sendMessage(ChatColor.GRAY + "  → /cs " + homeName + " " + hName);
+        } else {
+            destination = plugin.getOwnHome(player.getUniqueId(), args[0]);
+            if (destination == null) {
+                var shared = plugin.getSharedHomes(player.getUniqueId());
+                if (shared.containsKey(args[0]) && shared.get(args[0]).size() == 1) {
+                    destination = shared.get(args[0]).values().iterator().next();
                 }
-                return true;
             }
         }
 
-        player.sendMessage(ChatColor.RED + "❌ 传送点 " +
-                ChatColor.GOLD + homeName +
-                ChatColor.RED + " 不存在！");
-        player.sendMessage(ChatColor.GRAY + "使用 /cs 查看传送点列表");
+        if (destination == null) {
+            player.sendMessage(plugin.getMsgError() + "❌ 传送点不存在！");
+            return true;
+        }
+
+        // 取消旧预热
+        var warmupTasks = plugin.getWarmupTasks();
+        BukkitTask old = warmupTasks.remove(player.getUniqueId());
+        if (old != null) old.cancel();
+        org.bukkit.event.Listener oldListener = moveListeners.remove(player.getUniqueId());
+        if (oldListener != null) org.bukkit.event.HandlerList.unregisterAll(oldListener);
+
+        int warmup = plugin.getHomeWarmup();
+        if (warmup <= 0 || player.isOp()) {
+            player.teleport(destination);
+            if (!player.isOp()) plugin.recordHomeUse(player.getUniqueId());
+            player.sendMessage(plugin.getMsgSuccess() + "🏠 已传送！" +
+                    plugin.getMsgInfo() + " (冷却" + plugin.getHomeCooldown() + "秒)");
+            return true;
+        }
+
+        final Location dest = destination;
+        player.sendMessage(plugin.getMsgPrimary() + "⏳ " + warmup + "秒后传送，请勿移动...");
+
+        BukkitTask task = plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+            warmupTasks.remove(player.getUniqueId());
+            org.bukkit.event.Listener l = moveListeners.remove(player.getUniqueId());
+            if (l != null) org.bukkit.event.HandlerList.unregisterAll(l);
+            player.teleport(dest);
+            plugin.recordHomeUse(player.getUniqueId());
+            player.sendMessage(plugin.getMsgSuccess() + "🏠 已传送！" +
+                    plugin.getMsgInfo() + " (冷却" + plugin.getHomeCooldown() + "秒)");
+        }, warmup * 20L);
+
+        warmupTasks.put(player.getUniqueId(), task);
+
+        // 移动监听
+        org.bukkit.event.Listener listener = new org.bukkit.event.Listener() {
+            @org.bukkit.event.EventHandler
+            public void onMove(org.bukkit.event.player.PlayerMoveEvent e) {
+                if (!e.getPlayer().equals(player)) return;
+                if (e.getFrom().getBlockX() == e.getTo().getBlockX()
+                        && e.getFrom().getBlockY() == e.getTo().getBlockY()
+                        && e.getFrom().getBlockZ() == e.getTo().getBlockZ()) return;
+                BukkitTask t = warmupTasks.remove(player.getUniqueId());
+                if (t != null) {
+                    t.cancel();
+                    this.unregister();
+                    player.sendMessage(plugin.getMsgError() + "❌ 你移动了，传送已取消！");
+                }
+            }
+            void unregister() {
+                moveListeners.remove(player.getUniqueId());
+                org.bukkit.event.HandlerList.unregisterAll(this);
+            }
+        };
+        moveListeners.put(player.getUniqueId(), listener);
+        plugin.getServer().getPluginManager().registerEvents(listener, plugin);
+
         return true;
     }
 
     private void showHomeList(Player player) {
         Map<String, Location> ownHomes = plugin.getHomesByName(player.getName());
         Map<String, Map<String, Location>> shared = plugin.getSharedHomes(player.getUniqueId());
-
         int ownCount = (ownHomes != null) ? ownHomes.size() : 0;
         int sharedCount = plugin.countSharedHomes(player.getUniqueId());
-        int remaining = plugin.getRemainingCooldown(player.getUniqueId());
 
         if (ownCount == 0 && sharedCount == 0) {
-            player.sendMessage(ChatColor.YELLOW + "你还没有任何传送点！");
-            player.sendMessage(ChatColor.GRAY + "使用 /szcs <名称> 设置传送点");
+            player.sendMessage(plugin.getMsgPrimary() + "你还没有任何传送点！");
             return;
         }
 
-        player.sendMessage(ChatColor.GOLD + "========== 传送点列表 " +
-                ChatColor.GRAY + "(" + (ownCount + sharedCount) + "个) " +
-                ChatColor.GOLD + "==========");
+        player.sendMessage(plugin.getMsgPrimary() + "========== 传送点列表 " +
+                plugin.getMsgInfo() + "(" + (ownCount + sharedCount) + "个) ==========");
 
-        // 冷却提示
-        if (remaining > 0) {
-            player.sendMessage(ChatColor.RED + "⏳ 冷却中：" + remaining + "秒后可传送");
-        } else {
-            player.sendMessage(ChatColor.GREEN + "✅ 可以传送 (冷却" + plugin.getHomeCooldown() + "秒)");
+        int remaining = plugin.getRemainingCooldown(player.getUniqueId());
+        if (remaining > 0 && !player.isOp()) {
+            player.sendMessage(plugin.getMsgError() + "⏳ 冷却中：" + remaining + "秒");
         }
 
-        // 自己的
-        if (ownHomes != null && !ownHomes.isEmpty()) {
-            for (Map.Entry<String, Location> entry : ownHomes.entrySet()) {
-                String worldName = getWorldDisplayName(entry.getValue());
-                if (remaining > 0) {
-                    player.sendMessage(ChatColor.WHITE + "  " + entry.getKey() +
-                            ChatColor.GRAY + "  [" + worldName + "]" +
-                            ChatColor.RED + "  (冷却中)");
-                } else {
-                    player.spigot().sendMessage(
-                            new ComponentBuilder("  ")
-                                    .append(entry.getKey())
-                                    .color(net.md_5.bungee.api.ChatColor.WHITE)
-                                    .event(new ClickEvent(ClickEvent.Action.RUN_COMMAND,
-                                            "/cs " + entry.getKey()))
-                                    .event(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
-                                            new ComponentBuilder("点击传送到 ")
-                                                    .color(net.md_5.bungee.api.ChatColor.GREEN)
-                                                    .append(entry.getKey())
-                                                    .color(net.md_5.bungee.api.ChatColor.GOLD)
-                                                    .create()))
-                                    .append("  [" + worldName + "]")
-                                    .color(net.md_5.bungee.api.ChatColor.GRAY)
-                                    .create()
-                    );
-                }
+        if (ownHomes != null) {
+            for (var e : ownHomes.entrySet()) {
+                player.spigot().sendMessage(
+                        new ComponentBuilder("  ").append(e.getKey())
+                                .color(net.md_5.bungee.api.ChatColor.WHITE)
+                                .event(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/cs " + e.getKey()))
+                                .event(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
+                                        new ComponentBuilder("点击传送").color(net.md_5.bungee.api.ChatColor.GREEN).create()))
+                                .append("  [" + getWorldName(e.getValue()) + "]")
+                                .color(net.md_5.bungee.api.ChatColor.GRAY).create()
+                );
             }
         }
 
-        // 分享的
         if (!shared.isEmpty()) {
-            for (Map.Entry<String, Map<String, Location>> se : shared.entrySet()) {
-                String sharer = se.getKey();
-                for (Map.Entry<String, Location> he : se.getValue().entrySet()) {
-                    String worldName = getWorldDisplayName(he.getValue());
-                    if (remaining > 0) {
-                        player.sendMessage(ChatColor.AQUA + "  " + sharer + " " +
-                                ChatColor.WHITE + he.getKey() +
-                                ChatColor.GRAY + "  [" + worldName + "]" +
-                                ChatColor.RED + "  (冷却中)");
-                    } else {
-                        player.spigot().sendMessage(
-                                new ComponentBuilder("  ")
-                                        .append(sharer)
-                                        .color(net.md_5.bungee.api.ChatColor.AQUA)
-                                        .append(" " + he.getKey())
-                                        .color(net.md_5.bungee.api.ChatColor.WHITE)
-                                        .event(new ClickEvent(ClickEvent.Action.RUN_COMMAND,
-                                                "/cs " + sharer + " " + he.getKey()))
-                                        .event(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
-                                                new ComponentBuilder("点击传送到 ")
-                                                        .color(net.md_5.bungee.api.ChatColor.GREEN)
-                                                        .append(sharer)
-                                                        .color(net.md_5.bungee.api.ChatColor.GOLD)
-                                                        .append(" 分享的 ")
-                                                        .color(net.md_5.bungee.api.ChatColor.GREEN)
-                                                        .append(he.getKey())
-                                                        .color(net.md_5.bungee.api.ChatColor.GOLD)
-                                                        .create()))
-                                        .append("  [" + worldName + "]")
-                                        .color(net.md_5.bungee.api.ChatColor.GRAY)
-                                        .create()
-                        );
-                    }
-                }
-            }
+            for (var se : shared.entrySet())
+                for (var he : se.getValue().entrySet())
+                    player.spigot().sendMessage(
+                            new ComponentBuilder("  ").append(se.getKey())
+                                    .color(net.md_5.bungee.api.ChatColor.AQUA)
+                                    .append(" " + he.getKey()).color(net.md_5.bungee.api.ChatColor.WHITE)
+                                    .event(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/cs " + se.getKey() + " " + he.getKey()))
+                                    .event(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
+                                            new ComponentBuilder("点击传送").color(net.md_5.bungee.api.ChatColor.GREEN).create()))
+                                    .append("  [" + getWorldName(he.getValue()) + "]")
+                                    .color(net.md_5.bungee.api.ChatColor.GRAY).create()
+                    );
         }
-        player.sendMessage(ChatColor.GOLD + "==========================================");
+        player.sendMessage(plugin.getMsgPrimary() + "==========================================");
     }
 
-    private String getWorldDisplayName(Location loc) {
+    private String getWorldName(Location loc) {
         if (loc.getWorld() == null) return "未知";
-        String name = loc.getWorld().getName();
-        return switch (name) {
+        return switch (loc.getWorld().getName()) {
             case "world" -> "主世界";
             case "world_nether" -> "地狱";
             case "world_the_end" -> "末地";
-            default -> name;
+            default -> loc.getWorld().getName();
         };
     }
 }

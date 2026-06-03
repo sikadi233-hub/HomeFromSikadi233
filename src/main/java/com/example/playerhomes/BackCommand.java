@@ -25,14 +25,17 @@ public class BackCommand implements CommandExecutor {
 
         Player player = (Player) sender;
 
-        // ========== 冷却检查 ==========
-        int remaining = plugin.getBackRemainingCooldown(player.getUniqueId());
-        if (remaining > 0) {
-            player.sendMessage(ChatColor.RED + "⏳ /back 冷却中！请等待 " +
-                    ChatColor.GOLD + remaining +
-                    ChatColor.RED + " 秒后再试。");
-            return true;
+        // 冷却检查（OP 免疫）
+        if (!player.isOp()) {
+            int remaining = plugin.getBackRemainingCooldown(player.getUniqueId());
+            if (remaining > 0) {
+                player.sendMessage(plugin.getMsgError() + "⏳ /back 冷却中！请等待 " +
+                        plugin.getMsgPrimary() + remaining +
+                        plugin.getMsgError() + " 秒后再试。");
+                return true;
+            }
         }
+
 
         // ========== /back death → 回到死亡点 ==========
         if (args.length >= 1 && args[0].equalsIgnoreCase("death")) {
