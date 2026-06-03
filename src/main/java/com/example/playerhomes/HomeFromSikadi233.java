@@ -26,6 +26,9 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
     private final Map<UUID, Map<String, Map<String, Location>>> pendingShares = new HashMap<>();
     private final Map<UUID, Map<String, Map<String, BukkitTask>>> cancelTasks = new HashMap<>();
 
+    // Spawn
+    private Location spawnLocation;
+
     // TPA
     private final Map<UUID, TpaRequest> tpaRequests = new HashMap<>();
     private final Map<UUID, BukkitTask> tpaCancelTasks = new HashMap<>();
@@ -120,6 +123,13 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
         // Back
         getCommand("back").setExecutor(new BackCommand(this));
 
+        // 加载 spawn
+        loadSpawn();
+
+        // Spawn 命令
+        getCommand("setspawn").setExecutor(new SetSpawnCommand(this));
+        getCommand("spawn").setExecutor(new SpawnCommand(this));
+
         // 事件
         getServer().getPluginManager().registerEvents(this, this);
 
@@ -187,6 +197,71 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
     public int countOwnHomes(UUID uuid) {
         Map<String, Location> map = homesMap.get(uuid);
         return map == null ? 0 : map.size();
+    }
+
+    // ==================== Spawn ====================
+
+    public Location getSpawn() { return spawnLocation; }
+
+    public void setSpawn(Location loc) {
+        this.spawnLocation = loc.clone();
+        if (database.isEnabled()) saveSpawnToDB();
+        saveSpawnToFile();
+    }
+
+    private void loadSpawn() {
+        if (database.isEnabled()) loadSpawnFromDB();
+        if (spawnLocation == null) {
+            Location loc = getConfig().getLocation("spawn");
+            if (loc != null) spawnLocation = loc;
+        }
+        // 仍然为空就用服务器默认出生点
+        if (spawnLocation == null) {
+            spawnLocation = getServer().getWorlds().get(0).getSpawnLocation();
+        }
+    }
+
+    private void saveSpawnToFile() {
+        if (spawnLocation != null) {
+            getConfig().set("spawn", spawnLocation);
+            saveConfig();
+        }
+    }
+
+    private void loadSpawnFromDB() {
+        String p = database.getPrefix();
+        try (Connection c = database.getConnection();
+             Statement s = c.createStatement()) {
+            s.execute("CREATE TABLE IF NOT EXISTS " + p + "spawn (world VARCHAR(64), x DOUBLE, y DOUBLE, z DOUBLE, yaw FLOAT, pitch FLOAT)");
+            try (ResultSet rs = s.executeQuery("SELECT * FROM " + p + "spawn LIMIT 1")) {
+                if (rs.next()) {
+                    spawnLocation = new Location(Bukkit.getWorld(rs.getString("world")),
+                            rs.getDouble("x"), rs.getDouble("y"), rs.getDouble("z"),
+                            rs.getFloat("yaw"), rs.getFloat("pitch"));
+                }
+            }
+        } catch (SQLException e) {
+            getLogger().warning("加载spawn失败: " + e.getMessage());
+        }
+    }
+
+    private void saveSpawnToDB() {
+        if (spawnLocation == null) return;
+        String p = database.getPrefix();
+        try (Connection c = database.getConnection();
+             Statement s = c.createStatement()) {
+            s.execute("DELETE FROM " + p + "spawn");
+            try (PreparedStatement ps = c.prepareStatement(
+                    "INSERT INTO " + p + "spawn (world,x,y,z,yaw,pitch) VALUES(?,?,?,?,?,?)")) {
+                ps.setString(1, spawnLocation.getWorld().getName());
+                ps.setDouble(2, spawnLocation.getX()); ps.setDouble(3, spawnLocation.getY());
+                ps.setDouble(4, spawnLocation.getZ());
+                ps.setFloat(5, spawnLocation.getYaw()); ps.setFloat(6, spawnLocation.getPitch());
+                ps.executeUpdate();
+            }
+        } catch (SQLException e) {
+            getLogger().warning("保存spawn失败: " + e.getMessage());
+        }
     }
 
     // ==================== 已接受的分享 ====================
@@ -471,6 +546,7 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
         saveSharedToFile();
         savePendingToFile();
         saveWarpsToFile();
+        saveSpawnToFile();
     }
 
     private void loadHomesFromFile() {

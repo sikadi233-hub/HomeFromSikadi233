@@ -60,3 +60,9 @@ commands:
   back:
     description: 回到上次传送位置或死亡点
     usage: "/back 或 /back death"
+  setspawn:
+    description: (OP)设置出生点
+    usage: "/setspawn"
+  spawn:
+    description: 传送到出生点
+    usage: "/spawn"
