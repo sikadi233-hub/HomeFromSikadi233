@@ -1,0 +1,22 @@
+/szcs <名>          设置传送点
+/cs                 列表(点击传送)
+/cs <名>            传送
+/cs <玩家> <名>     分享传送
+/csd                详情
+/csd <玩家>         OP查看别人
+/sccs <名>          删除
+/csop <玩家> <名>   OP传送
+/fxcs <玩家> <名>   分享
+/tycs <玩家> <名>   接受分享
+/btycs <玩家> <名>  拒绝分享
+/tpa <玩家>         请求传送
+/tpahere <玩家>     请求对方来
+/tpaccept           接受TPA
+/tpdeny             拒绝TPA
+/setwarp <名>       OP设地标
+/warp <名>          去地标
+/warplist           地标列表
+/delwarp <名>       OP删地标
+/rtp                随机传送
+/back               返回
+/back death         死亡点
