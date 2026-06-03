@@ -1,0 +1,25 @@
+# ========== 传送点 ==========
+max-own-homes: 4
+max-shared-homes: 3
+share-timeout: 30
+home-cooldown: 3
+
+# ========== TPA ==========
+tpa-timeout: 60
+
+# ========== 跨服同步 (MySQL) ==========
+# 留空则只用 YAML 本地存储
+mysql:
+  enabled: false
+  host: localhost
+  port: 3306
+  database: minecraft
+  username: root
+  password: ""
+  table-prefix: "hfs_"
+# ========== RTP 随机传送 ==========
+rtp-cooldown: 300      # RTP 冷却(秒) ← 默认5分钟
+rtp-min-radius: 500    # 最小半径
+rtp-max-radius: 3000   # 最大半径
+# ========== /back ==========
+back-cooldown: 10

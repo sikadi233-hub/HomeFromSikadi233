@@ -1,0 +1,62 @@
+name: HomeFromSikadi233
+version: 1.21.11
+main: com.example.playerhomes.HomeFromSikadi233
+api-version: "1.21"
+author: Sikadi233
+description: 传送点插件 - TPA/Warp/跨服同步
+
+commands:
+  szcs:
+    description: 设置传送点
+    usage: "/szcs <名称>"
+  cs:
+    description: 传送到传送点
+    usage: "/cs [名称]"
+  csd:
+    description: 查看传送点列表
+    usage: "/csd [玩家名]"
+  sccs:
+    description: 删除传送点
+    usage: "/sccs <名称>"
+  csop:
+    description: (OP)传送到指定玩家的传送点
+    usage: "/csop <玩家名> <传送点名>"
+  fxcs:
+    description: 分享传送点给好友
+    usage: "/fxcs <玩家名> <传送点名>"
+  tycs:
+    description: 接受分享
+    usage: "/tycs <分享者名> <传送点名>"
+  btycs:
+    description: 拒绝分享
+    usage: "/btycs <分享者名> <传送点名>"
+  tpa:
+    description: 请求传送到某玩家
+    usage: "/tpa <玩家名>"
+  tpahere:
+    description: 请求某玩家传送到你
+    usage: "/tpahere <玩家名>"
+  tpaccept:
+    description: 接受传送请求
+    usage: "/tpaccept"
+  tpdeny:
+    description: 拒绝传送请求
+    usage: "/tpdeny"
+  setwarp:
+    description: (OP)设置地标
+    usage: "/setwarp <名称>"
+  warp:
+    description: 传送到地标
+    usage: "/warp <名称>"
+  warplist:
+    description: 地标列表
+    usage: "/warplist"
+  delwarp:
+    description: (OP)删除地标
+    usage: "/delwarp <名称>"
+  rtp:
+    description: 随机传送
+    usage: "/rtp"
+  back:
+    description: 回到上次传送位置或死亡点
+    usage: "/back 或 /back death"
