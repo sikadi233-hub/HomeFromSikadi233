@@ -10,10 +10,9 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitTask;
-
+import java.util.UUID;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
 
 public class HomeCommand implements CommandExecutor {
 
@@ -27,14 +26,12 @@ public class HomeCommand implements CommandExecutor {
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-
         if (!(sender instanceof Player)) {
             sender.sendMessage("只有玩家才能使用这个命令！");
             return true;
         }
-
         Player player = (Player) sender;
-
+        if (plugin.blockIfInBattle(player)) return true;
         // /cs 无参数 → 显示列表
         if (args.length == 0) {
             showHomeList(player);

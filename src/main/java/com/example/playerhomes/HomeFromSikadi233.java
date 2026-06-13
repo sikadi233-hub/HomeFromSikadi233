@@ -487,12 +487,18 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
         Player player = event.getPlayer();
         if (backInProgress.contains(player.getUniqueId())) return;
         if (event.getFrom().getWorld() == null) return;
+        // ★ 如果目标是 SDB 战斗场地，不记录
+        if (isSikadiBattleArena(event.getTo())) return;
         lastTeleportLocation.put(player.getUniqueId(), event.getFrom().clone());
     }
 
+
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerDeath(PlayerDeathEvent event) {
-        deathLocation.put(event.getEntity().getUniqueId(), event.getEntity().getLocation().clone());
+        Location deathLoc = event.getEntity().getLocation();
+        // ★ 如果在 SDB 战斗场地内死亡，不记录（避免 /back death 回到场地）
+        if (isSikadiBattleArena(deathLoc)) return;
+        deathLocation.put(event.getEntity().getUniqueId(), deathLoc.clone());
     }
 
     @EventHandler(priority = EventPriority.NORMAL)
@@ -784,4 +790,61 @@ public final class HomeFromSikadi233 extends JavaPlugin implements Listener {
             }
         } catch (SQLException e) { getLogger().warning("保存spawn失败: " + e.getMessage()); }
     }
+    // ==================== ★ SikadiBattle 联动 ====================
+
+    /** 反射检测玩家是否在 SikadiBattle 对战中 */
+    public boolean isInSikadiBattle(UUID uuid) {
+        org.bukkit.plugin.Plugin sb = getServer().getPluginManager().getPlugin("SikadiBattle");
+        if (sb == null || !sb.isEnabled()) return false;
+        try {
+            java.lang.reflect.Method getInstance = sb.getClass().getMethod("getInstance");
+            Object inst = getInstance.invoke(null);
+            java.lang.reflect.Method getBM = inst.getClass().getMethod("getBattleManager");
+            Object bm = getBM.invoke(inst);
+            java.lang.reflect.Method isInBattle = bm.getClass().getMethod("isInBattle", UUID.class);
+            return (boolean) isInBattle.invoke(bm, uuid);
+        } catch (Exception e) { return false; }
+    }
+
+    /** 反射检测坐标是否在 SikadiBattle 场地内 */
+    public boolean isSikadiBattleArena(Location loc) {
+        org.bukkit.plugin.Plugin sb = getServer().getPluginManager().getPlugin("SikadiBattle");
+        if (sb == null || !sb.isEnabled()) return false;
+        try {
+            java.lang.reflect.Method getInstance = sb.getClass().getMethod("getInstance");
+            Object inst = getInstance.invoke(null);
+            java.lang.reflect.Method getAM = inst.getClass().getMethod("getArenaManager");
+            Object am = getAM.invoke(inst);
+            java.lang.reflect.Method getAll = am.getClass().getMethod("getAllArenas");
+            @SuppressWarnings("unchecked")
+            java.util.Collection<?> arenas = (java.util.Collection<?>) getAll.invoke(am);
+            for (Object arena : arenas) {
+                java.lang.reflect.Method isInside = arena.getClass().getMethod("isInside", Location.class);
+                if ((boolean) isInside.invoke(arena, loc)) return true;
+            }
+        } catch (Exception e) { return false; }
+        return false;
+    }
+
+    /** 战斗中阻止传送 */
+    public boolean blockIfInBattle(Player player) {
+        if (isInSikadiBattle(player.getUniqueId())) {
+            player.sendMessage(ChatColor.RED + "⚠ 你正在 PvP 对战中，无法使用传送！");
+            player.sendMessage(ChatColor.GRAY + "请等待对战结束或使用 /sdb leave 退出");
+            return true;
+        }
+        return false;
+    }
+
+    /** 场地内阻止设传送点 */
+    public boolean blockIfInArena(Player player) {
+        if (isSikadiBattleArena(player.getLocation())) {
+            player.sendMessage(ChatColor.RED + "⚠ 你处于 PvP 战斗场地内，不能在此设传送点！");
+            return true;
+        }
+        return false;
+    }
+
+
+
 }

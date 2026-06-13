@@ -16,16 +16,17 @@ public class SetHomeCommand implements CommandExecutor {
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-
         if (!(sender instanceof Player)) {
             sender.sendMessage("只有玩家才能使用这个命令！");
             return true;
         }
-
         Player player = (Player) sender;
 
+        // ★ 战斗场地内禁止设家
+        if (plugin.blockIfInArena(player)) return true;
+
         if (args.length < 1) {
-            player.sendMessage(ChatColor.RED + "用法：/sethome <名称>");
+            player.sendMessage(ChatColor.RED + "用法：/szcs <名称>");
             player.sendMessage(ChatColor.GRAY + "你已使用: " +
                     plugin.countOwnHomes(player.getUniqueId()) + "/" +
                     plugin.getMaxOwnHomes() + " 个传送点");
@@ -34,17 +35,14 @@ public class SetHomeCommand implements CommandExecutor {
 
         String homeName = args[0].toLowerCase();
         String error = plugin.setHome(player.getUniqueId(), homeName, player.getLocation());
-
         if (error != null) {
             player.sendMessage(ChatColor.RED + "❌ " + error);
             return true;
         }
-
-        int used = plugin.countOwnHomes(player.getUniqueId());
-        int max = plugin.getMaxOwnHomes();
-        player.sendMessage(ChatColor.GREEN + "✅ 传送点 " +
-                ChatColor.GOLD + homeName +
-                ChatColor.GREEN + " 设置成功！ (" + used + "/" + max + ")");
+        player.sendMessage(ChatColor.GREEN + "✅ 传送点 " + ChatColor.GOLD + homeName
+                + ChatColor.GREEN + " 设置成功！ ("
+                + plugin.countOwnHomes(player.getUniqueId()) + "/" + plugin.getMaxOwnHomes() + ")");
         return true;
     }
+
 }
